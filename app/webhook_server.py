@@ -14,6 +14,7 @@ from app.webex_client import WEBEX_API_BASE, WebexClient
 log = logging.getLogger(__name__)
 MAX_BODY = 1_000_000
 
+invalid = {"status": "error", "result": "invalid_event"}
 
 class WebexEventHandler:
     def __init__(self, client, bot_person_id, processor=None):
@@ -51,7 +52,7 @@ class WebexEventHandler:
 
         room_id = message["roomId"]
         files = message.get("files") or []
-        text = message.get("text", "")
+        mentioned_people = message.get("mentionedPeople")
 
         # 3) ตัดสินผลตามจำนวนไฟล์
         #TODO: len(files) > 1 → response = {"status":"error","result":"multiple_attachments"}
@@ -59,24 +60,20 @@ class WebexEventHandler:
         #       len(files) == 0 → processor(mentioned, None, self.bot_person_id)
         #       len(files) == 1 → ดู 12.4.1 ด้านล่าง
         if len(files) > 1:
-            # กรณีมีมากกว่า 1 ไฟล์: ห้ามดาวน์โหลด และห้ามเรียก processor
             response = {"status": "error", "result": "multiple_attachments"}
 
         elif len(files) == 0:
-            # กรณีไม่มีไฟล์: ส่งข้อความให้ processor โดยไฟล์เป็น None
-            response = self.processor(text, None, self.bot_person_id)
+            response = self.processor(mentioned_people, None, self.bot_person_id)
 
-        else: # len(files) == 1
-            # กรณีมี 1 ไฟล์: ดาวน์โหลดไฟล์ลงโฟลเดอร์ชั่วคราวแล้วส่งให้ processor
-            file_url = files[0]
-            file_bytes = self.client.download_file(file_url)
+        else:  # len(files) == 1
+            file_bytes = self.client.download_file(files[0])
 
             with TemporaryDirectory() as tmp_dir:
-                file_path = Path(tmp_dir) / "downloaded_file"
+                file_path = Path(tmp_dir) / "request.yaml"
                 file_path.write_bytes(file_bytes)
-                
-                # เรียก processor ภายใน context manager ของ TemporaryDirectory 
-                response = self.processor(text, str(file_path), self.bot_person_id)
+                response = self.processor(
+                    mentioned_people, file_path, self.bot_person_id
+                )
         
         # 4) ส่งผลกลับ
         #TODO: self.client.send_message(room_id, json.dumps(response))
@@ -84,3 +81,93 @@ class WebexEventHandler:
         self.client.send_message(room_id, json.dumps(response))
         return response
         pass
+
+def make_http_handler(submit_event):
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            #TODO: self.path == "/health" → 200 {"status":"ok","result":"healthy"}
+            if self.path == "/health":
+                self._send_json(200, {"status": "ok", "result": "healthy"})
+            else:
+                self._send_json(404, {"status": "error", "result": "not_found"})
+            # pass
+
+        def do_POST(self):
+            #TODO: path ไม่ใช่ "/webhook" → 404
+            if self.path != "/webhook":
+                return self._send_json(404, {"status": "error", "result": "not_found"})
+    
+            #TODO: อ่าน Content-Length (ไม่มี/ไม่ใช่ตัวเลข/ติดลบ/0/เกิน MAX_BODY → 400 invalid_event)
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError: # none
+                return self._send_json(400, invalid)
+            if length < 1 or length > MAX_BODY: #  below 0 over max body
+                return self._send_json(400, invalid)
+            #TODO: body = self.rfile.read(length); json.loads → ไม่ใช่ dict หรือ parse พัง → 400
+            try:
+                event = json.loads(self.rfile.read(length))
+            except (ValueError, UnicodeDecodeError): # parse พัง
+                return self._send_json(400, invalid)  
+            if not isinstance(event, dict): # not dict
+                return self._send_json(400, invalid)
+            #TODO: submit_event(event)  แล้วตอบ 200 {"status":"ok","result":"accepted"}
+            #       (ห้ามรอผลประมวลผล และห้าม submit ถ้า body ไม่ถูกต้อง)
+            submit_event(event)
+            self._send_json(200, {"status": "ok", "result": "accepted"})
+            # pass
+
+        def log_message(self, format, *args):    # ปิด log ซ้ำซ้อนของ http.server
+            log.debug(format, *args)
+
+    return Handler
+
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    host = os.environ.get("WEBHOOK_HOST", "0.0.0.0")
+    port = int(os.environ.get("WEBHOOK_PORT", "8000"))
+
+    client = WebexClient()
+    #TODO: หา bot_person_id ด้วย GET {WEBEX_API_BASE}/people/me
+    #       (ใช้ client.session.get(..., headers=client.headers, timeout=10).json()["id"])
+    response = client.session.get(
+        f"{WEBEX_API_BASE}/people/me",
+        headers=client.headers,
+        timeout=10,
+    )
+    response.raise_for_status()
+    bot_person_id = response.json()["id"]
+
+    handler = WebexEventHandler(client, bot_person_id)
+
+    executor = ThreadPoolExecutor(max_workers=1)   # ทีละคำขอ กัน router ซ้อนกัน
+    def run_event(event):
+        try:
+            handler.handle_event(event)
+        except Exception:
+            log.exception("failed to handle event")
+            
+    def submit_event(event):
+        #TODO: executor.submit(...) โดยห่อด้วย try/except + log
+        #       เพื่อไม่ให้ exception ใน thread หายเงียบ
+        try:
+            executor.submit(run_event, event)
+        except Exception:
+            log.exception("failed to submit event")
+        # pass
+    server = ThreadingHTTPServer((host, port), make_http_handler(submit_event))
+    log.info("listening on %s:%s", host, port)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
