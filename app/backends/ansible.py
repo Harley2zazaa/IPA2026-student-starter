@@ -41,7 +41,8 @@ def apply_interface(
     run_playbook=None, #run_playbook: function ที่ใช้รัน (ถ้าไม่ส่งมาจะใช้ของจริง)
 ):
     """Apply complete desired interface state using Ansible."""
-    run_playbook = run_playbook or _real_run_playbook # ถ้าไม่ส่ง mock มา ให้ใช้ _real_run_playbook (pattern แบบ dependency injection)
+    # run_playbook = run_playbook or _real_run_playbook # ถ้าไม่ส่ง mock มา ให้ใช้ _real_run_playbook (pattern แบบ dependency injection)
+    run_playbook = run_playbook
     ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
     variables = {
         "router": router,
