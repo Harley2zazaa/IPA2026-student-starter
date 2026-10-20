@@ -85,7 +85,7 @@ def delete_interface(
     netmiko_delete=None,
 ):
     """Delete an interface using Netmiko."""
-    netmiko_delete = netmiko_delete or _real_delete
+    netmiko_delete = netmiko_delete
     try:
         outcome = netmiko_delete(router, interface_name)
     except Exception as exc:
