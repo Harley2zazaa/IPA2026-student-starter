@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 MAX_BODY = 1_000_000
 
 invalid = {"status": "error", "result": "invalid_event"}
+URL_PATH = os.environ.get("URL_PATH", "/webhook")
+TARGET_ROOM_ID = os.environ.get("ROOM_ID") or os.environ.get("WEBEX_ROOM_ID")
 
 class WebexEventHandler:
     def __init__(self, client, bot_person_id, processor=None):
@@ -50,7 +52,7 @@ class WebexEventHandler:
         if message.get("personId") == self.bot_person_id:
             return None
 
-        room_id = message["roomId"]
+        room_id = message.get("roomId") or TARGET_ROOM_ID
         files = message.get("files") or []
         mentioned_people = message.get("mentionedPeople")
 
@@ -102,8 +104,11 @@ def make_http_handler(submit_event):
 
         def do_POST(self):
             #TODO: path ไม่ใช่ "/webhook" → 404
-            if self.path != "/webhook":
+            if self.path != URL_PATH:
                 return self._send_json(404, {"status": "error", "result": "not_found"})
+            
+            # if self.path != "/webhook":
+            #     return self._send_json(404, {"status": "error", "result": "not_found"})
     
             #TODO: อ่าน Content-Length (ไม่มี/ไม่ใช่ตัวเลข/ติดลบ/0/เกิน MAX_BODY → 400 invalid_event)
             try:
