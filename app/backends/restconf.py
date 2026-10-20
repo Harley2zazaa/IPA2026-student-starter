@@ -1,3 +1,12 @@
+import ipaddress
+import os
+
+import requests
+
+from app.backends import planning
+def _auth():
+    return os.environ.get("ROUTER_USER", ""), os.environ.get("ROUTER_PASS", "")
+
 def get_interface_state(
     router,
     interface_name,
