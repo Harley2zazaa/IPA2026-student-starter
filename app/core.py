@@ -27,7 +27,8 @@ def validate_request(data):
     if not isinstance(data, dict) : # It is dict ?
         return _error("invalid_yaml")
 
-    if type(data.get("version")) is not int or data["version"] != 1: # Check Version  (.get กัน KeyError, != 1 กัน 0/-1)
+    version = data.get("version")
+    if type(version) is not int or version != 1:
         return _error("invalid_version")
     
     #router: missing_router, then invalid_router if it is not one of the allowed router addresses.

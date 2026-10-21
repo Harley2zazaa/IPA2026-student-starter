@@ -1,8 +1,13 @@
+import logging
 import os
 import re
 
 from netmiko import ConnectHandler
 from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException
+from textfsm import TextFSMError
+
+logger = logging.getLogger(__name__)
+
 def _code_for(exc):
     # 1) auth ก่อน เพราะ PermissionError เป็น subclass ของ OSError
     if isinstance(exc, (PermissionError,NetmikoAuthenticationException)):
@@ -37,7 +42,11 @@ def get_interface_state(
                                   password=os.environ.get("ROUTER_PASS", ""),
                                   timeout=8, conn_timeout=8)
             try:
-                ip_info = conn.send_command(f"show ip interface {interface_name}", use_textfsm=True)
+                try:
+                    ip_info = conn.send_command(f"show ip interface {interface_name}", use_textfsm=True)
+                except TextFSMError:
+                    # IOS ตอบ "% Invalid input" (ไม่มี interface) → template Error rule → ถือว่า not_found
+                    ip_info = []
                 descriptions = conn.send_command("show interfaces description", use_textfsm=True)
             finally:
                 conn.disconnect()
@@ -45,6 +54,7 @@ def get_interface_state(
         # Netmiko auth exception → authentication_failed
         # Netmiko timeout → connection_failed
         # TextFSM / อื่น ๆ → backend_failed
+        logger.exception("get_interface_state failed")
         return _error(_code_for(exc))
 
     #TODO: หา record ใน ip_info ที่ interface == interface_name
@@ -87,7 +97,6 @@ def get_interface_state(
             "description": description
         }
     }
-    raise NotImplementedError
 
 
 def delete_interface(
@@ -112,12 +121,22 @@ def delete_interface(
                                       password=os.environ.get("ROUTER_PASS", ""),
                                       timeout=8, conn_timeout=8)
                 try:
-                    conn.send_config_set([f"no interface {interface_name}"])
+                    # เก็บ output ไว้ดู: ถ้ามี "%" แสดงว่า IOS ปฏิเสธคำสั่ง
+                    out = conn.send_config_set([f"no interface {interface_name}"])
+                    logger.info("config output: %s", out)
                 finally:
                     conn.disconnect()
                 after = get_interface_state(router, interface_name)
-                outcome = "deleted" if after.get("result") == "not_found" else None
+                # verify รอบสอง error → ส่ง error จริงต่อ ไม่กลืนเป็น backend_failed
+                if after["status"] == "error":
+                    return after
+                # not_found หลังลบ = ลบสำเร็จ / ยังอยู่ = IOS ไม่ยอมลบ → None → backend_failed
+                if after["result"] == "not_found":
+                    outcome = "deleted"
+                else:
+                    outcome = None
     except Exception as exc:
+        logger.exception("delete_interface failed")
         return _error(_code_for(exc))
     
     if outcome == "deleted":
@@ -126,4 +145,3 @@ def delete_interface(
         return {"status": "ok", "result": "not_found", "interface": None}
     else:
         return _error("backend_failed")
-    raise NotImplementedError

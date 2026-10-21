@@ -1,11 +1,14 @@
 """Part 4 student implementation."""
 
 import os
+import time
 
 import requests
 
 WEBEX_API_BASE = 'https://webexapis.com/v1'
 TIMEOUT = 10
+RETRY_STATUS = (429, 502, 503, 504)  # Webex ชั่วคราวไม่พร้อม → ลองใหม่
+MAX_ATTEMPTS = 3
 
 
 class WebexClient:
@@ -50,7 +53,13 @@ class WebexClient:
         #       → raise_for_status() → return .json()
         url = f"{WEBEX_API_BASE}/messages"
         payload = {"roomId": room_id, "text": text}
-        response = self.session.post(url, headers=self.headers, json=payload, timeout=TIMEOUT)
+        for attempt in range(MAX_ATTEMPTS):
+            response = self.session.post(url, headers=self.headers, json=payload, timeout=TIMEOUT)
+            # 429/502/503/504 → รอแล้วลองใหม่ (รอบสุดท้ายปล่อยให้ raise_for_status แจ้ง error)
+            if getattr(response, "status_code", None) in RETRY_STATUS and attempt < MAX_ATTEMPTS - 1:
+                time.sleep(2 ** attempt)  # รอ 1s, 2s
+                continue
+            break
         response.raise_for_status()
         return response.json()
         pass
