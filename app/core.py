@@ -25,37 +25,37 @@ def validate_request(data):
     # TODO: implement
     # Dict Checking
     if not isinstance(data, dict) : # It is dict ?
-        return _error("no_yaml")
+        return _error("invalid_yaml")
 
-    if type(data["version"]) is not int or data["version"] > 1: # Check Version
+    if type(data.get("version")) is not int or data["version"] != 1: # Check Version  (.get กัน KeyError, != 1 กัน 0/-1)
         return _error("invalid_version")
     
     #router: missing_router, then invalid_router if it is not one of the allowed router addresses.
     if "router" not in data : 
         return _error("missing_router")
-    if data["router"] not in ALLOWED_ROUTERS:
-        return _error("invalid_router ")
+    if not isinstance(data["router"], str) or data["router"] not in ALLOWED_ROUTERS:
+        return _error("invalid_router")
 
     # method: missing_method, then invalid_method if unknown.
     if "method" not in data:
         return _error("missing_method")
-    if data["method"] not in CAPABILITIES: # Check Method
+    if not isinstance(data["method"], str) or data["method"] not in CAPABILITIES: # Check Method (isinstance กัน unhashable)
         return _error("invalid_method")
 
     # action: missing_action, then invalid_action if unsupported by the selected method.
     if "action" not in data:
         return _error("missing_action")
-    if data["action"] not in CAPABILITIES[data["method"]]:  # Check Action X method
+    if not isinstance(data["action"], str) or data["action"] not in CAPABILITIES[data["method"]]:  # Check Action X method
         return _error("invalid_action")
 
     # desired, desired.interface, and desired.interface.name: missing_desired, missing_interface, or missing_interface_name
-    if "desired" not in data:
+    if "desired" not in data or not isinstance(data["desired"], dict):
         return _error("missing_desired")
 
-    if "interface" not in data["desired"]:
+    if "interface" not in data["desired"] or not isinstance(data["desired"]["interface"], dict):
         return _error("missing_interface")
 
-    if "name" not in data["desired"]["interface"]: #Check Interface name
+    if not data["desired"]["interface"].get("name"): #Check Interface name (ไม่มี/ว่าง/None)
         return _error("missing_interface_name")
     # plan and apply only: missing_ipv4, missing_description, missing_admin_state, then invalid_admin_state.
     if data['action'] in FULL_STATE_ACTIONS:
@@ -65,7 +65,7 @@ def validate_request(data):
             return _error("missing_description")
         if "admin_state" not in data["desired"]["interface"]:
             return _error("missing_admin_state")
-        if data["desired"]["interface"]["admin_state"] not in VALID_ADMIN_STATES:
+        if not isinstance(data["desired"]["interface"]["admin_state"], str) or data["desired"]["interface"]["admin_state"] not in VALID_ADMIN_STATES:
             return _error("invalid_admin_state")
         
     return {"status": "ok", "result": "accepted"}

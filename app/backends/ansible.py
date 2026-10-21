@@ -28,9 +28,11 @@ def _real_run_playbook(variables):
         os.remove(vars_file)   # ลบไฟล์ชั่วคราว
     # ตรวจผลลัพธ์แล้ว raise exception ให้ตรงประเภท -> Throw Erro ไปให้ตัวก่อนหน้า
     out = (result.stdout + result.stderr).lower() # บรรทัดนี้เป็นการ รวมข้อความที่ ansible-playbook พิมพ์ออกมาทั้งหมด แล้วแปลงเป็นตัวพิมพ์เล็ก เพื่อเอาไปค้นหาคำสำคัญ
+    if result.returncode == 0:
+        return
     if "authentication" in out or "permission denied" in out:
         raise PermissionError(out)
-    if result.returncode == 4: 
+    if result.returncode == 4 or "unreachable" in out: 
         raise ConnectionError(out)
     if result.returncode != 0:
         raise RuntimeError(out)
@@ -41,8 +43,7 @@ def apply_interface(
     run_playbook=None, #run_playbook: function ที่ใช้รัน (ถ้าไม่ส่งมาจะใช้ของจริง)
 ):
     """Apply complete desired interface state using Ansible."""
-    # run_playbook = run_playbook or _real_run_playbook # ถ้าไม่ส่ง mock มา ให้ใช้ _real_run_playbook (pattern แบบ dependency injection)
-    run_playbook = run_playbook
+    run_playbook = run_playbook or _real_run_playbook # ถ้าไม่ส่ง mock มา ให้ใช้ _real_run_playbook (pattern แบบ dependency injection)
     ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
     variables = {
         "router": router,
@@ -56,11 +57,9 @@ def apply_interface(
         run_playbook(variables)         # ต้องเรียกครั้งเดียว
     except PermissionError:
         return _error("authentication_failed")
-    except ConnectionError:
+    except (ConnectionError, TimeoutError):
         return _error("connection_failed")
-    except RuntimeError:
-        return _error("backend_failed")
-    except Exception as exc:
-        return exc
+    except Exception:
+        return _error("backend_failed")  # เดิม return exc (ไม่ใช่ dict)
     return {"status": "ok", "result": "applied"}
     raise NotImplementedError

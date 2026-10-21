@@ -20,7 +20,8 @@ def get_interface_state(
 ):
     """Return normalized interface status using RESTCONF."""
     # http_get = http_get or _real_get
-    http_get = http_get
+    http_get = http_get or (lambda u: requests.get(u, auth=_auth(), verify=False, timeout=TIMEOUT,
+                                                   headers={"Accept": "application/yang-data+json"}))  # real transport
     url = (f"https://{router}/restconf/data/"
            f"ietf-interfaces:interfaces/interface={interface_name}")
     #TODO: 404 → {"status":"ok","result":"not_found","interface":None}
@@ -70,9 +71,9 @@ def get_interface_state(
         return _error("backend_failed")
     except PermissionError:
         return _error("authentication_failed")
-    except ConnectionError:
-        return _error("connection_failed")
-    except RuntimeError:
+    except (ConnectionError, requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return _error("connection_failed")  # requests ConnectionError ไม่ใช่ subclass ของ built-in
+    except Exception:
         return _error("backend_failed")
 
 def plan_interface(
@@ -96,7 +97,9 @@ def apply_interface(
     http_put=None,
 ):
     """Apply complete desired interface state using RESTCONF."""
-    http_put = http_put
+    http_put = http_put or (lambda u, json: requests.put(u, json=json, auth=_auth(), verify=False, timeout=TIMEOUT,
+                                                         headers={"Content-Type": "application/yang-data+json",
+                                                                  "Accept": "application/yang-data+json"}))  # real transport
     number = int(desired_interface["name"][len("Loopback"):])
     ip = ipaddress.IPv4Interface(desired_interface["ipv4"])  # .ip / .network.netmask
 
@@ -137,10 +140,8 @@ def apply_interface(
             return _error("backend_failed")
     except PermissionError:
             return _error("authentication_failed")
-    except ConnectionError:
+    except (ConnectionError, requests.exceptions.Timeout, requests.exceptions.ConnectionError):
         return _error("connection_failed")
-    except RuntimeError:
-        return _error("backend_failed")
-    except Exception as exc:
-        return exc
+    except Exception:
+        return _error("backend_failed")  # เดิม return exc (ไม่ใช่ dict)
 

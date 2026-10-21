@@ -2,13 +2,13 @@ import os
 import re
 
 from netmiko import ConnectHandler
-from netmiko import NetmikoAuthenticationException
+from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException
 def _code_for(exc):
     # 1) auth ก่อน เพราะ PermissionError เป็น subclass ของ OSError
     if isinstance(exc, (PermissionError,NetmikoAuthenticationException)):
         return "authentication_failed"
     # 2) connection
-    if isinstance(exc, (ConnectionError)):
+    if isinstance(exc, (ConnectionError, TimeoutError, NetmikoTimeoutException)):
         return "connection_failed"
     # 3) RPCError, RuntimeError, อื่น ๆ
     return "backend_failed"
@@ -29,7 +29,18 @@ def get_interface_state(
     """Return normalized interface status using Netmiko + TextFSM."""
     netmiko_get = netmiko_get
     try:
-        ip_info, descriptions = netmiko_get(router, interface_name)
+        if netmiko_get:
+            ip_info, descriptions = netmiko_get(router, interface_name)
+        else:  # real transport
+            conn = ConnectHandler(device_type="cisco_ios", host=router,
+                                  username=os.environ.get("ROUTER_USER", ""),
+                                  password=os.environ.get("ROUTER_PASS", ""),
+                                  timeout=8, conn_timeout=8)
+            try:
+                ip_info = conn.send_command(f"show ip interface {interface_name}", use_textfsm=True)
+                descriptions = conn.send_command("show interfaces description", use_textfsm=True)
+            finally:
+                conn.disconnect()
     except Exception as exc:
         # Netmiko auth exception → authentication_failed
         # Netmiko timeout → connection_failed
@@ -39,7 +50,7 @@ def get_interface_state(
     #TODO: หา record ใน ip_info ที่ interface == interface_name
     #       ไม่มี (หรือ ip_info ว่าง) → {"status":"ok","result":"not_found","interface":None}
     record = None
-    if ip_info:
+    if isinstance(ip_info, list):  # TextFSM คืน str เมื่อ parse ไม่ได้
         for item in ip_info:
             if item.get("interface") == interface_name:
                 record = item
@@ -59,7 +70,7 @@ def get_interface_state(
     admin_state = "down" if "administratively down" in str(link_status).lower() else "up"
     #TODO: description: หาใน descriptions โดยเทียบ _normalize_port(port) กับ interface_name     #       ไม่เจอ → None
     description = None
-    if descriptions:
+    if isinstance(descriptions, list):
         for desc in descriptions:
             port = desc.get("port") or desc.get("interface")
             if port and _normalize_port(port) == interface_name:
@@ -87,7 +98,25 @@ def delete_interface(
     """Delete an interface using Netmiko."""
     netmiko_delete = netmiko_delete
     try:
-        outcome = netmiko_delete(router, interface_name)
+        if netmiko_delete:
+            outcome = netmiko_delete(router, interface_name)
+        else:  # real: เช็ก -> ลบ -> verify (ใช้ get_interface_state ที่มีอยู่)
+            before = get_interface_state(router, interface_name)
+            if before["status"] == "error":
+                return before
+            if before["result"] == "not_found":
+                outcome = "not_found"
+            else:
+                conn = ConnectHandler(device_type="cisco_ios", host=router,
+                                      username=os.environ.get("ROUTER_USER", ""),
+                                      password=os.environ.get("ROUTER_PASS", ""),
+                                      timeout=8, conn_timeout=8)
+                try:
+                    conn.send_config_set([f"no interface {interface_name}"])
+                finally:
+                    conn.disconnect()
+                after = get_interface_state(router, interface_name)
+                outcome = "deleted" if after.get("result") == "not_found" else None
     except Exception as exc:
         return _error(_code_for(exc))
     

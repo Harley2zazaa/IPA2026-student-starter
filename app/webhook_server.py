@@ -15,8 +15,7 @@ log = logging.getLogger(__name__)
 MAX_BODY = 1_000_000
 
 invalid = {"status": "error", "result": "invalid_event"}
-URL_PATH = os.environ.get("URL_PATH", "/webhook")
-TARGET_ROOM_ID = os.environ.get("ROOM_ID") or os.environ.get("WEBEX_ROOM_ID")
+URL_PATH = "/webhook"  # spec ตายตัว ไม่อ่านจาก env
 
 class WebexEventHandler:
     def __init__(self, client, bot_person_id, processor=None):
@@ -52,7 +51,7 @@ class WebexEventHandler:
         if message.get("personId") == self.bot_person_id:
             return None
 
-        room_id = message.get("roomId") or TARGET_ROOM_ID
+        room_id = message["roomId"]  # ตอบห้องต้นทางเสมอ ห้าม hard-code
         files = message.get("files") or []
         mentioned_people = message.get("mentionedPeople")
 
@@ -68,14 +67,18 @@ class WebexEventHandler:
             response = self.processor(mentioned_people, None, self.bot_person_id)
 
         else:  # len(files) == 1
-            file_bytes = self.client.download_file(files[0])
+            try:
+                file_bytes = self.client.download_file(files[0])
 
-            with TemporaryDirectory() as tmp_dir:
-                file_path = Path(tmp_dir) / "request.yaml"
-                file_path.write_bytes(file_bytes)
-                response = self.processor(
-                    mentioned_people, file_path, self.bot_person_id
-                )
+                with TemporaryDirectory() as tmp_dir:
+                    file_path = Path(tmp_dir) / "request.yaml"
+                    file_path.write_bytes(file_bytes)
+                    response = self.processor(
+                        mentioned_people, file_path, self.bot_person_id
+                    )
+            except Exception:  # กัน bot เงียบ (Live นับเป็น timeout)
+                log.exception("failed to process request")
+                response = {"status": "error", "result": "backend_failed"}
         
         # 4) ส่งผลกลับ
         #TODO: self.client.send_message(room_id, json.dumps(response))

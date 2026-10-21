@@ -1,5 +1,4 @@
 import os
-import socket
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 import ipaddress
@@ -45,7 +44,11 @@ def _connect(router):
 def get_interface_state(router, interface_name, netconf_get_config=None):
     netconf_get_config = netconf_get_config 
     try:
-        xml_text = netconf_get_config(router, FILTER.format(name=interface_name))
+        if netconf_get_config:
+            xml_text = netconf_get_config(router, FILTER.format(name=interface_name))
+        else:  # real transport
+            with _connect(router) as m:
+                xml_text = m.get_config(source="running", filter=("subtree", FILTER.format(name=interface_name))).data_xml
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return _error("backend_failed")
@@ -122,7 +125,11 @@ def apply_interface(router, desired_interface, netconf_edit_config=None):
         address=address, mask=mask, shutdown=shutdown,
     )
     try:
-        netconf_edit_config(router, config_xml)
+        if netconf_edit_config:
+            netconf_edit_config(router, config_xml)
+        else:  # real transport
+            with _connect(router) as m:
+                m.edit_config(target="running", config=config_xml)
     except Exception as exc:
         return _error(_code_for(exc))
     return {"status": "ok", "result": "applied"}
