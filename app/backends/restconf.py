@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import re
 
 import requests
 
@@ -12,6 +13,15 @@ def _error(code):
 
 def _auth():
     return os.environ.get("ROUTER_USER", ""), os.environ.get("ROUTER_PASS", "")
+
+def _native_args(desired_interface):
+    """Return (loopback number, IPv4Interface); raise ValueError if malformed."""
+    name = desired_interface["name"]
+    match = re.fullmatch(r"Loopback(\d+)", name) if isinstance(name, str) else None
+    if not match:
+        raise ValueError("unsupported interface name")
+    return int(match.group(1)), ipaddress.IPv4Interface(desired_interface["ipv4"])
+
 
 def get_interface_state(
     router,
@@ -100,17 +110,19 @@ def apply_interface(
     http_put = http_put or (lambda u, json: requests.put(u, json=json, auth=_auth(), verify=False, timeout=TIMEOUT,
                                                          headers={"Content-Type": "application/yang-data+json",
                                                                   "Accept": "application/yang-data+json"}))  # real transport
-    number = int(desired_interface["name"][len("Loopback"):])
-    ip = ipaddress.IPv4Interface(desired_interface["ipv4"])  # .ip / .network.netmask
+    try:
+        number, ip = _native_args(desired_interface)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        # ipv4 / ชื่อ interface ผิดรูปแบบ → ยังไม่ได้ติดต่อ router
+        return _error("backend_failed")
 
-    is_enabled = desired_interface["admin_state"] == "up"
     url = (f"https://{router}/restconf/data/"
            f"Cisco-IOS-XE-native:native/interface/Loopback={number}")
      #TODO: ip → address → primary → address / mask (เป็น str)
     payload = {
         "Cisco-IOS-XE-native:Loopback": {
             "name": number,  # int
-            "description": desired_interface["description"],
+            "description": str(desired_interface["description"]),
             "ip": {
                 "address": {
                     "primary": {

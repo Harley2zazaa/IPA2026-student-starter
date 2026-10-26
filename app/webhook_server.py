@@ -26,12 +26,16 @@ class WebexEventHandler:
     def handle_event(self, event):
         # 1) กรอง event (ใช้ .get() ให้ทน event ที่ไม่มี data)
         # ตรวจสอบว่าเป็น message event ชนิด created และมี data["id"]
+        if not isinstance(event, dict):
+            return None
         resource = event.get("resource")
         event_type = event.get("event")
         data = event.get("data") or {}
+        if not isinstance(data, dict):
+            return None
         #TODO: resource == "messages" และ event == "created" และมี data["id"]
         #       ไม่ผ่าน → return None (ไม่ส่งข้อความ)
-        if resource != "messages" or event_type != "created" or "id" not in data:
+        if resource != "messages" or event_type != "created" or not data.get("id"):
             return None
         
         #TODO: data.get("personId") == self.bot_person_id → return None "ก่อน" get_message
@@ -64,7 +68,11 @@ class WebexEventHandler:
             response = {"status": "error", "result": "multiple_attachments"}
 
         elif len(files) == 0:
-            response = self.processor(mentioned_people, None, self.bot_person_id)
+            try:
+                response = self.processor(mentioned_people, None, self.bot_person_id)
+            except Exception:  # กัน bot เงียบ
+                log.exception("failed to process request")
+                response = {"status": "error", "result": "backend_failed"}
 
         else:  # len(files) == 1
             try:

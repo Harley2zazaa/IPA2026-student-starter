@@ -1,9 +1,10 @@
 import os
+import re
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 import ipaddress
 from ncclient import manager
-from ncclient.transport.errors import AuthenticationError, SSHError
+from ncclient.transport.errors import AuthenticationError, SSHError, TransportError
 from ncclient.operations.rpc import RPCError
 from ncclient.operations import RPCError
 
@@ -24,7 +25,7 @@ def _code_for(exc):
     if isinstance(exc, (PermissionError, AuthenticationError)):
         return "authentication_failed"
     # 2) connection
-    if isinstance(exc, (ConnectionError, TimeoutError, SSHError, OSError)):
+    if isinstance(exc, (ConnectionError, TimeoutError, SSHError, TransportError, OSError)):
         return "connection_failed"
     # 3) RPCError, RuntimeError, อื่น ๆ
     return "backend_failed"
@@ -113,12 +114,19 @@ CONFIG_TEMPLATE = """<config
 def apply_interface(router, desired_interface, netconf_edit_config=None):
     netconf_edit_config = netconf_edit_config 
 
-    number = desired_interface["name"][len("Loopback"):]
-    ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
-    address = str(ip.ip)
-    mask = str(ip.network.netmask)
-    description = escape(desired_interface["description"])
-    shutdown = "<shutdown/>" if desired_interface["admin_state"] == "down" else ""
+    try:
+        name = desired_interface["name"]
+        match = re.fullmatch(r"Loopback(\d+)", name) if isinstance(name, str) else None
+        if not match:
+            raise ValueError("unsupported interface name")
+        number = match.group(1)
+        ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
+        address = str(ip.ip)
+        mask = str(ip.network.netmask)
+        description = escape(str(desired_interface["description"]))
+        shutdown = "<shutdown/>" if desired_interface["admin_state"] == "down" else ""
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return _error("backend_failed")
 
     config_xml = CONFIG_TEMPLATE.format(
         number=number, description=description,

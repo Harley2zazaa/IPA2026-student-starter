@@ -1,8 +1,11 @@
 import ipaddress
 import os
+import re
 import subprocess
 import tempfile
 import json
+ANSIBLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ansible")
+
 def _error(code):
     return {"status": "error", "result": code}
 
@@ -15,8 +18,8 @@ def _real_run_playbook(variables):
     #ทดสอบ เรียก ansible-playbook
     try:
         result = subprocess.run(
-            ["ansible-playbook", "-i", "ansible/inventory.ini",
-             "ansible/apply_interface.yml",
+            ["ansible-playbook", "-i", os.path.join(ANSIBLE_DIR, "inventory.ini"),
+             os.path.join(ANSIBLE_DIR, "apply_interface.yml"),
              "-e", f"ansible_host={variables['router']}",
              "-e", f"@{vars_file}"],
             capture_output=True, text=True, timeout=15,
@@ -44,15 +47,21 @@ def apply_interface(
 ):
     """Apply complete desired interface state using Ansible."""
     run_playbook = run_playbook or _real_run_playbook # ถ้าไม่ส่ง mock มา ให้ใช้ _real_run_playbook (pattern แบบ dependency injection)
-    ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
-    variables = {
-        "router": router,
-        "interface_name": desired_interface["name"],
-        "description": desired_interface["description"],
-        "ipv4_address": str(ip.ip),
-        "netmask": str(ip.network.netmask),
-        "shutdown": desired_interface["admin_state"] == "down",   # bool
-    }
+    try:
+        name = desired_interface["name"]
+        if not isinstance(name, str) or not re.fullmatch(r"Loopback\d+", name):
+            raise ValueError("unsupported interface name")
+        ip = ipaddress.IPv4Interface(desired_interface["ipv4"])
+        variables = {
+            "router": router,
+            "interface_name": name,
+            "description": str(desired_interface["description"]),
+            "ipv4_address": str(ip.ip),
+            "netmask": str(ip.network.netmask),
+            "shutdown": desired_interface["admin_state"] == "down",   # bool
+        }
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return _error("backend_failed")
     try:
         run_playbook(variables)         # ต้องเรียกครั้งเดียว
     except PermissionError:
@@ -62,4 +71,3 @@ def apply_interface(
     except Exception:
         return _error("backend_failed")  # เดิม return exc (ไม่ใช่ dict)
     return {"status": "ok", "result": "applied"}
-    raise NotImplementedError

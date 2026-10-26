@@ -69,22 +69,23 @@ def get_interface_state(
     if not record:
         return {"status": "ok", "result": "not_found", "interface": None}
     #TODO: ipv4 = ip_address[0] + "/" + prefix_length[0]  (prefix_length เป็น str)
-    ip_addr = record["ip_address"][0] if isinstance(record.get("ip_address"), list) else record.get("ip_address")
-    prefix_len = record["prefix_length"][0] if isinstance(record.get("prefix_length"), list) else record.get("prefix_length")
-    ipv4 = f"{ip_addr}/{prefix_len}"
-    #TODO: admin_state: "administratively down" ใน link_status → "down" ไม่งั้น "up"
-    link_status = record.get("link_status", "")
-    if isinstance(link_status, list) and link_status:
-        link_status = link_status[0]
-    
+    def _first(value):
+        if isinstance(value, list):
+            return value[0] if value else None
+        return value
+
+    ip_addr = _first(record.get("ip_address"))
+    prefix_len = _first(record.get("prefix_length"))
+    ipv4 = f"{ip_addr}/{prefix_len}" if ip_addr and prefix_len not in (None, "") else None
+    link_status = _first(record.get("link_status")) or ""
+
     admin_state = "down" if "administratively down" in str(link_status).lower() else "up"
-    #TODO: description: หาใน descriptions โดยเทียบ _normalize_port(port) กับ interface_name     #       ไม่เจอ → None
     description = None
     if isinstance(descriptions, list):
         for desc in descriptions:
             port = desc.get("port") or desc.get("interface")
             if port and _normalize_port(port) == interface_name:
-                description = desc.get("description")
+                description = desc.get("description") or None
                 break
     # Formating and return
     return {
