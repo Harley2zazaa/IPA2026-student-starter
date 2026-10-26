@@ -35,7 +35,8 @@ def _real_run_playbook(variables):
         return
     if "authentication" in out or "permission denied" in out:
         raise PermissionError(out)
-    if result.returncode == 4 or "unreachable" in out: 
+    # หมายเหตุ: "unreachable=0" อยู่ใน PLAY RECAP ทุกครั้ง จึงต้องเช็ก "unreachable!" (ข้อความ fatal จริง)
+    if result.returncode == 4 or "unreachable!" in out: 
         raise ConnectionError(out)
     if result.returncode != 0:
         raise RuntimeError(out)
