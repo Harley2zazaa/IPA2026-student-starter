@@ -22,7 +22,7 @@ def _real_run_playbook(variables):
              os.path.join(ANSIBLE_DIR, "apply_interface.yml"),
              "-e", f"ansible_host={variables['router']}",
              "-e", f"@{vars_file}"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=120,
             env={**os.environ, "ANSIBLE_HOST_KEY_CHECKING": "False"},
         )
     except subprocess.TimeoutExpired:
