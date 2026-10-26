@@ -29,17 +29,25 @@ def _real_run_playbook(variables):
         raise ConnectionError("timeout")
     finally:
         os.remove(vars_file)   # ลบไฟล์ชั่วคราว
-    # ตรวจผลลัพธ์แล้ว raise exception ให้ตรงประเภท -> Throw Erro ไปให้ตัวก่อนหน้า
-    out = (result.stdout + result.stderr).lower() # บรรทัดนี้เป็นการ รวมข้อความที่ ansible-playbook พิมพ์ออกมาทั้งหมด แล้วแปลงเป็นตัวพิมพ์เล็ก เพื่อเอาไปค้นหาคำสำคัญ
+    # ตรวจผลลัพธ์แล้ว raise exception ให้ตรงประเภท
+    out = (result.stdout + result.stderr).lower()
     if result.returncode == 0:
         return
-    if "authentication" in out or "permission denied" in out:
+    # 1) credential ถูกปฏิเสธ (Ansible รายงานเป็น UNREACHABLE! + "authentication failed" จึงต้องเช็กก่อน)
+    if any(k in out for k in ("authentication failed", "authentication", "permission denied", "invalid credentials")):
         raise PermissionError(out)
-    # หมายเหตุ: "unreachable=0" อยู่ใน PLAY RECAP ทุกครั้ง จึงต้องเช็ก "unreachable!" (ข้อความ fatal จริง)
-    if result.returncode == 4 or "unreachable!" in out: 
-        raise ConnectionError(out)
-    if result.returncode != 0:
+    # 2) playbook/inventory พัง (parse/syntax error) ใช้ exit code 4 เหมือน unreachable
+    #    แต่ไม่ใช่ปัญหาการเชื่อมต่อ -> backend_failed
+    if any(k in out for k in ("yaml parsing failed", "syntax error", "error! ",
+                              "could not be found", "no hosts matched",
+                              "couldn't resolve module", "the module cisco.ios")):
         raise RuntimeError(out)
+    # 3) router ต่อไม่ได้จริง (ข้อความ fatal เท่านั้น เพราะ "unreachable=0" อยู่ใน PLAY RECAP ทุกครั้ง)
+    if "unreachable!" in out or "timed out" in out or "connection refused" in out \
+            or "no route to host" in out:
+        raise ConnectionError(out)
+    # 4) ที่เหลือ (task ล้มเหลว, rc 2 ฯลฯ) -> backend_failed
+    raise RuntimeError(out)
 
 def apply_interface(
     router,
